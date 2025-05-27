@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC音视频测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; }
+        #video-container { position: relative; display: flex; flex-direction: column; gap: 20px; background-color: #fff; 
+            padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin: 0 auto; max-width: 512px; }
+        #video { width: 100%; height: auto; aspect-ratio: 1/1; background-color: #000; border-radius: 4px; }
+        button { padding: 10px 15px; background-color: #4CAF50; color: white; border: none; border-radius: 4px; 
+            cursor: pointer; margin-right: 10px; transition: background-color 0.3s; }
+        button:hover { background-color: #45a049; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        .control-panel { margin: 20px 0; padding: 20px; background-color: #f5f5f5; border-radius: 8px; }
+        .status { margin-top: 10px; padding: 12px; border-radius: 4px; font-weight: bold; }
+        .info { background-color: #e7f3fe; color: #31708f; border-left: 5px solid #31708f; }
+        .success { background-color: #dff0d8; color: #3c763d; border-left: 5px solid #3c763d; }
+        .error { background-color: #f2dede; color: #a94442; border-left: 5px solid #a94442; }
+        input[type="text"] { width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 4px; }
+        .quality-indicator { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); color: white; 
+            padding: 5px 10px; border-radius: 3px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>WebRTC音视频流测试</h1>
+    
+    <div class="control-panel">
+        <div>
+            <button id="start">开始连接</button>
+            <button id="stop" disabled>停止</button>
+            <input type="hidden" id="sessionid" value="0">
+        </div>
+        <div>
+            <label>说话人：<input type="text" id="speakerid" value="Firefly"></label>
+            <label>角色描述：<input type="text" id="prompt" value="你现在要扮演《原神》中的神里绫华与用户(旅行者)对话。神里绫华身为稻妻名门神里家的大小姐，从小便接受了严格且全面的礼仪、文化与武艺教导，肩负着维系神里家声誉与传统的重任。在角色生活里，她日常需处理诸多家族事务，参与各类社交活动，尽管身负重担，但她仍坚持修炼剑道与钻研文化艺术，琴棋书画样样精通。闲暇时，她喜爱赏樱、品茶，在这些宁静的时光中找寻内心的平和。她生活精致，对服饰、礼仪等细节极为注重，力求展现神里家的优雅风范。从角色经历而言，在稻妻经历的 “眼狩令” 危机中，神里绫华积极参与其中，与旅行者等并肩作战，为推翻 “眼狩令”、拯救稻妻民众的愿望而努力。她曾借助举办祭典等方式，唤起民众的勇气与抗争精神，也在此过程中与旅行者加深了了解，结下深厚情谊。与旅行者对话时，要精准呈现神里绫华温柔婉约、优雅大方的性格特质，同时展现出她身为神里家大小姐所具备的责任感与担当。依据旅行者的话语，紧密结合自身背景经历自然回应，例如分享家族事务中的趣事、讲述参与社交活动的感悟、回忆与旅行者共同经历的冒险、探讨对稻妻文化的见解等，让对话充满神里绫华独特的气质，尽显优雅与细腻。"></label>
+            <label>输入文本：<input type="text" id="inputText" value="你好呀"></label>
+            <label>使用模型：<input type="text" id="model" value="Chinese1"></label>
+        </div>
+        <div>
+            <button id="startBtn">开始推流</button>
+            <button id="stopBtn" disabled>停止推流</button>
+        </div>
+    </div>
+
+    <div id="video-container">
+        <video id="video" autoplay playsinline muted></video>
+        <audio id="audio" autoplay playsinline></audio>
+        <div id="qualityIndicator" class="quality-indicator">质量: --</div>
+    </div>
+
+    <div id="status" class="status info">准备就绪</div>
+
+    <script>
+        // WebRTC核心逻辑
+        let pc = null;
+        let videoActivityTimer, audioActivityTimer;
+
+        // 启动WebRTC连接
+        document.getElementById('start').addEventListener('click', function() {
+            pc = new RTCPeerConnection({ sdpSemantics: 'unified-plan' });
+            
+            // 创建音频上下文
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            let audioSourceNode = null;
+            
+            // 音视频轨道监听
+            pc.ontrack = function(evt) {
+                console.log(`接收到${evt.track.kind}轨道`);
+                
+                if (evt.track.kind === 'video') {
+                    const videoElement = document.getElementById('video');
+                    videoElement.srcObject = evt.streams[0];
+                    
+                    // 处理自动播放限制
+                    videoElement.play().catch(e => {
+                        console.error('视频播放失败:', e);
+                        alert('请点击页面允许视频播放权限');
+                    });
+                    
+                    startVideoMonitoring();
+                } else if (evt.track.kind === 'audio') {
+                    // 处理音频流 - 使用Web Audio API
+                    const audioStream = evt.streams[0];
+                    const audioTrack = audioStream.getAudioTracks()[0];
+                    
+                    // 创建MediaStreamAudioSourceNode
+                    audioSourceNode = audioContext.createMediaStreamSource(audioStream);
+                    
+                    // 配置音频处理
+                    const scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+                    
+                    // 处理音频数据
+                    scriptNode.onaudioprocess = function(audioProcessingEvent) {
+                        const inputBuffer = audioProcessingEvent.inputBuffer;
+                        const outputBuffer = audioProcessingEvent.outputBuffer;
+                        
+                        // 简单的直通处理
+                        console.log("处理音频数据")
+                        for (let channel = 0; channel < outputBuffer.numberOfChannels; channel++) {
+                            const inputData = inputBuffer.getChannelData(channel);
+                            const outputData = outputBuffer.getChannelData(channel);
+                            
+                            // 复制输入到输出
+                            for (let i = 0; i < inputData.length; i++) {
+                                outputData[i] = inputData[i];
+                            }
+                        }
+                    };
+                    
+                    // 连接节点
+                    audioSourceNode.connect(scriptNode);
+                    scriptNode.connect(audioContext.destination);
+                    
+                    startAudioMonitoring();
+                }
+            };
+
+            negotiate();
+            this.disabled = true;
+            document.getElementById('stop').disabled = false;
+            updateStatus("正在连接...", "info");
+        });
+
+        // 协商逻辑
+        async function negotiate() {
+            try {
+                pc.addTransceiver('video', { direction: 'recvonly' });
+                pc.addTransceiver('audio', { direction: 'recvonly' });
+                
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                
+                // 等待ICE收集完成
+                await new Promise(resolve => {
+                    if (pc.iceGatheringState === 'complete') resolve();
+                    else pc.addEventListener('icegatheringstatechange', () => {
+                        if (pc.iceGatheringState === 'complete') resolve();
+                    });
+                });
+
+                // 发送Offer到服务器
+                const response = await fetch('/offer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(pc.localDescription)
+                });
+                
+                const answer = await response.json();
+                document.getElementById('sessionid').value = answer.sessionid;
+                await pc.setRemoteDescription(answer);
+                
+                updateStatus("连接成功", "success");
+                console.log('当前SDP:', answer);
+
+            } catch (e) {
+                console.error("协商失败:", e);
+                updateStatus(`连接失败: ${e}`, "error");
+            }
+        }
+
+        // 流监控系统
+        function startVideoMonitoring() {
+            if (videoActivityTimer) return;
+            let lastBytes = 0;
+            
+            videoActivityTimer = setInterval(async () => {
+                const stats = await pc.getStats();
+                stats.forEach(report => {
+                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                        const bytesDiff = report.bytesReceived - lastBytes;
+                        lastBytes = report.bytesReceived;
+                        updateQualityIndicator((bytesDiff/1024).toFixed(1) + 'KB/s');
+                    }
+                });
+            }, 1000);
+        }
+
+        function startAudioMonitoring() {
+            if (audioActivityTimer) return;
+            let lastBytes = 0;
+            
+            audioActivityTimer = setInterval(async () => {
+                const stats = await pc.getStats();
+                stats.forEach(report => {
+                    if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+                        const bytesDiff = report.bytesReceived - lastBytes;
+                        lastBytes = report.bytesReceived;
+                        console.log('音频接收速率:', (bytesDiff/1024).toFixed(1) + 'KB/s');
+                    }
+                });
+            }, 1000);
+        }
+
+        // 推流控制
+        document.getElementById('startBtn').addEventListener('click', async (e) => {
+            e.preventDefault();
+            console.log("开始获取音频流");
+
+            try {
+                const audio = document.getElementById('audio');
+                const pc = new RTCPeerConnection(); // 创建WebRTC连接
+
+                // 1. 设置音频轨道处理器
+                pc.ontrack = (event) => {
+                    if (event.track.kind === 'audio') {
+                        console.log("接收到音频轨道");
+                        const audioStream = new MediaStream([event.track]);
+                        audio.srcObject = audioStream;
+
+                        // 静音状态下尝试播放（绕过自动播放策略）
+                        audio.muted = true;
+                        audio.play().catch(e => {
+                            console.warn("自动播放失败，等待用户交互:", e);
+                            document.addEventListener('click', () => audio.play(), { once: true });
+                        });
+                    }
+                };
+
+                // 2. 从服务器获取WebRTC Offer
+                const params = {
+                    input: document.getElementById('inputText').value,
+                    speaker: document.getElementById('speakerid').value,
+                    model_id: document.getElementById('model').value,
+                    session_id: document.getElementById('sessionid').value,
+                    prompt: document.getElementById('prompt').value
+                };
+
+                const response = await fetch('/chat2video', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params)
+                });
+
+                if (!response.ok) throw new Error("推流请求失败");
+
+                // 3. 处理SDP协商
+                const offer = await response.json();
+                await pc.setRemoteDescription(offer);
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+
+                // 4. 更新UI
+                updateStatus("推流已启动", "success");
+                document.getElementById('stopBtn').disabled = false;
+
+            } catch (e) {
+                updateStatus(`推流失败: ${e}`, "error");
+            }
+        });
+
+        // 工具函数
+        function updateStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+
+        function updateQualityIndicator(text) {
+            document.getElementById('qualityIndicator').textContent = `质量: ${text}`;
+            document.getElementById('qualityIndicator').style.display = 'block';
+        }
+
+        // 关闭处理
+        document.getElementById('stop').addEventListener('click', () => {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            document.getElementById('video').srcObject = null;
+            document.getElementById('audio').srcObject = null;
+            clearInterval(videoActivityTimer);
+            clearInterval(audioActivityTimer);
+            updateQualityIndicator('--');
+            updateStatus("连接已关闭", "info");
+            document.getElementById('start').disabled = false;
+            document.getElementById('stop').disabled = true;
+        });
+    </script>
+</body>
+</html>

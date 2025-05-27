@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC 音视频流测试</title>
+    <style>
+        /* 保持原有样式不变 */
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; }
+        #video-container { position: relative; display: flex; flex-direction: column; gap: 20px; background-color: #fff; 
+            padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 100%; max-width: 512px; margin: 0 auto; }
+        #video { width: 100%; height: auto; aspect-ratio: 1/1; background-color: #000; border-radius: 4px; }
+        /* 其他样式保持不变... */
+    </style>
+    <!-- 统一脚本引用 -->
+    <script src="./srs.sdk.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.5.0/dist/sockjs.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <h1>WebRTC 音视频流测试</h1>
+    
+    <div class="control-panel">
+        <div>
+            <button id="start">Start</button>
+            <button id="stop" style="display: none;">Stop</button>
+            <input type="hidden" id="sessionid" value="0">
+        </div>
+        <div>
+            <label>说话人: <input type="text" id="speakerid" value="Firefly" placeholder="输入说话人ID"></label>
+            <label>输入文本: <input type="text" id="inputText" value="你好呀" placeholder="输入要转换为语音的文本"></label>
+            <label>使用模型： <input type="text" id="model" value="Chinese1" placeholder="输入模型ID"></label>
+        </div>
+        <div>
+            <button id="startBtn">开始推流</button>
+            <button id="stopBtn" disabled>停止推流</button>
+        </div>
+        <div class="stats-container">
+            <div class="stat-item" id="connectionStat">状态: 未连接</div>
+            <div class="stat-item" id="videoStat">视频: --</div>
+            <div class="stat-item" id="audioStat">音频: --</div>
+        </div>
+    </div>
+
+    <div id="video-container">
+        <video id="video" autoplay playsinline muted></video>
+        <audio id="audio" autoplay playsinline muted></audio>
+        <div id="qualityIndicator" class="quality-indicator">质量: --</div>
+        <div id="textOutput">等待文本输出...</div>
+    </div>
+
+    <div id="status" class="status info">准备就绪</div>
+
+    <script>
+        // 全局状态管理
+        const AppState = {
+            DISCONNECTED: 0,
+            CONNECTING: 1,
+            CONNECTED: 2,
+            ERROR: 3
+        };
+        let pc = null;
+        let currentState = AppState.DISCONNECTED;
+
+        // 核心 WebRTC 逻辑
+        function start() {
+            const config = {
+                sdpSemantics: 'unified-plan',
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            };
+            
+            pc = new RTCPeerConnection(config);
+            
+            // 媒体轨道处理
+            pc.addEventListener('track', evt => {
+                const element = evt.track.kind === 'video' 
+                    ? document.getElementById('video') 
+                    : document.getElementById('audio');
+                
+                element.srcObject = evt.streams[0];
+                
+                if (evt.track.kind === 'audio') {
+                    element.muted = false;
+                    element.play().catch(e => console.error('音频播放失败:', e));
+                }
+                
+                updateAppState(AppState.CONNECTED);
+                updateStatus(`${evt.track.kind} 流已接收`, "success");
+            });
+
+            // 连接状态处理
+            pc.addEventListener('iceconnectionstatechange', () => {
+                if (pc.iceConnectionState === 'failed') {
+                    restartConnection();
+                }
+            });
+
+            negotiate();
+            document.getElementById('start').style.display = 'none';
+            document.getElementById('stop').style.display = 'inline-block';
+        }
+
+        async function negotiate() {
+            try {
+                pc.addTransceiver('video', { direction: 'recvonly' });
+                pc.addTransceiver('audio', { direction: 'recvonly' });
+                
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                
+                await new Promise(resolve => {
+                    if (pc.iceGatheringState === 'complete') resolve();
+                    else pc.addEventListener('icegatheringstatechange', () => 
+                        pc.iceGatheringState === 'complete' && resolve());
+                });
+
+                const response = await fetch('/offer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sdp: pc.localDescription.sdp,
+                        type: pc.localDescription.type
+                    })
+                });
+                
+                const answer = await response.json();
+                document.getElementById('sessionid').value = answer.sessionid;
+                await pc.setRemoteDescription(answer);
+                
+            } catch (e) {
+                console.error('协商失败:', e);
+                updateStatus(`连接错误: ${e.message}`, "error");
+            }
+        }
+
+        function stop() {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            document.getElementById('start').style.display = 'inline-block';
+            document.getElementById('stop').style.display = 'none';
+            updateAppState(AppState.DISCONNECTED);
+        }
+
+        // 状态管理
+        function updateAppState(newState) {
+            currentState = newState;
+            const states = {
+                0: { text: "未连接", btnState: [false, true] },
+                1: { text: "连接中...", btnState: [true, true] },
+                2: { text: "已连接", btnState: [true, false] },
+                3: { text: "错误", btnState: [false, true] }
+            };
+            
+            document.getElementById('connectionStat').textContent = `状态: ${states[newState].text}`;
+            document.getElementById('startBtn').disabled = states[newState].btnState[0];
+            document.getElementById('stopBtn').disabled = states[newState].btnState[1];
+        }
+
+        function updateStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+
+        // 事件绑定
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('start').addEventListener('click', start);
+            document.getElementById('stop').addEventListener('click', stop);
+            
+            document.getElementById('startBtn').addEventListener('click', async () => {
+                try {
+                    const response = await fetch('/chat2video', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            input: document.getElementById('inputText').value,
+                            speaker: document.getElementById('speakerid').value,
+                            model_id: document.getElementById('model').value,
+                            session_id: document.getElementById('sessionid').value
+                        })
+                    });
+                    updateStatus("文本推流已启动", "success");
+                } catch (error) {
+                    updateStatus(`推流失败: ${error}`, "error");
+                }
+            });
+        });
+
+        // 页面卸载处理
+        window.addEventListener('beforeunload', () => pc && pc.close());
+    </script>
+</body>
+</html>

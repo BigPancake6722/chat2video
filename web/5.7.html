@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC 音视频流测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        #video-container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 512px;
+            margin: 0 auto;
+        }
+        #video {
+            width: 100%;
+            height: auto;
+            aspect-ratio: 1/1;
+            background-color: #000;
+            border-radius: 4px;
+        }
+        #textOutput {
+            min-height: 100px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            white-space: pre-wrap;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .control-panel {
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .status {
+            margin-top: 10px;
+            padding: 12px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .info {
+            background-color: #e7f3fe;
+            color: #31708f;
+            border-left: 5px solid #31708f;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+            border-left: 5px solid #3c763d;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+            border-left: 5px solid #a94442;
+        }
+        .warning {
+            background-color: #fcf8e3;
+            color: #8a6d3b;
+            border-left: 5px solid #8a6d3b;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .quality-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            z-index: 10;
+        }
+        .stats-container {
+            display: flex;
+            gap: 15px;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        .stat-item {
+            background-color: #eee;
+            padding: 5px 10px;
+            border-radius: 3px;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.5.0/dist/sockjs.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <h1>WebRTC 音视频流测试</h1>
+    
+    <div class="control-panel">
+        <div>
+            <button id="start" onclick="start()">Start</button>
+            <button id="stop" onclick="stop()">Stop</button>
+            <input type="hidden" id="sessionid" value="0">
+        </div>
+        <div>
+            <label for="inputText">说话人:</label>
+            <input type="text" id="speakerid" value="Firefly" placeholder="输入说话人ID">
+        </div>
+        <div>
+            <label for="inputText">角色描述:</label>
+            <input type="text" id="prompt" value="你现在要扮演《原神》中的神里绫华与用户(旅行者)对话。神里绫华身为稻妻名门神里家的大小姐，从小便接受了严格且全面的礼仪、文化与武艺教导，肩负着维系神里家声誉与传统的重任。在角色生活里，她日常需处理诸多家族事务，参与各类社交活动，尽管身负重担，但她仍坚持修炼剑道与钻研文化艺术，琴棋书画样样精通。闲暇时，她喜爱赏樱、品茶，在这些宁静的时光中找寻内心的平和。她生活精致，对服饰、礼仪等细节极为注重，力求展现神里家的优雅风范。从角色经历而言，在稻妻经历的 “眼狩令” 危机中，神里绫华积极参与其中，与旅行者等并肩作战，为推翻 “眼狩令”、拯救稻妻民众的愿望而努力。她曾借助举办祭典等方式，唤起民众的勇气与抗争精神，也在此过程中与旅行者加深了了解，结下深厚情谊。与旅行者对话时，要精准呈现神里绫华温柔婉约、优雅大方的性格特质，同时展现出她身为神里家大小姐所具备的责任感与担当。依据旅行者的话语，紧密结合自身背景经历自然回应，例如分享家族事务中的趣事、讲述参与社交活动的感悟、回忆与旅行者共同经历的冒险、探讨对稻妻文化的见解等，让对话充满神里绫华独特的气质，尽显优雅与细腻。" placeholder="输入说话人ID">
+        </div>
+        <div>
+            <label for="inputText">输入文本:</label>
+            <input type="text" id="inputText" value="你好呀" placeholder="输入要转换为语音的文本">
+        </div>
+        <div>
+            <label for="inputText">使用模型：</label>
+            <input type="text" id="model" value="Chinese1" placeholder="输入使用的模型的id">
+        </div>
+        <div>
+            <button id="startBtn">开始推流</button>
+            <button id="stopBtn" disabled>停止推流</button>
+            <button id="reconnectBtn" disabled>重新连接</button>
+        </div>
+        <!-- <div class="stats-container"> -->
+            <!-- <div class="stat-item" id="connectionStat">状态: 未连接</div> -->
+            <!-- <div class="stat-item" id="videoStat">视频: --</div> -->
+            <!-- <div class="stat-item" id="audioStat">音频: --</div> -->
+        <!-- </div> -->
+    </div>
+
+    <div id="video-container">
+        <video id="video" autoplay playsinline muted></video>
+        <audio id="audio" autoplay playsinline></audio>
+        <div id="qualityIndicator" class="quality-indicator" style="display: none;">质量: --</div>
+        <!-- <div id="textOutput">等待文本输出...</div> -->
+    </div>
+
+    <div id="status" class="status info">准备就绪</div>
+
+    <script src="client.js"></script>
+    <script type="text/javascript" charset="UTF-8">
+        // 初始化函数（保留原有client.js功能）
+        function initStreamMonitoring() {
+            // 视频流活跃状态检测
+            let videoActivityTimer;
+            let lastVideoBytes = 0;
+            
+            // 音频流活跃状态检测
+            let audioActivityTimer;
+            let lastAudioBytes = 0;
+
+            // 启动视频流监控
+            function startVideoMonitoring() {
+                if (videoActivityTimer) return;
+                
+                videoActivityTimer = setInterval(async () => {
+                    const stats = await window.pc.getStats();
+                    stats.forEach(report => {
+                        if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                            const bytesDiff = report.bytesReceived - lastVideoBytes;
+                            lastVideoBytes = report.bytesReceived;
+                            
+                            // 控制台输出实时数据
+                            console.log(`[Video Stream] FPS: ${report.framesPerSecond || 'N/A'}, 接收速率: ${(bytesDiff/1024).toFixed(1)}KB/s`);
+                            
+                            // 更新页面显示
+                            const videoInfo = `分辨率: ${document.getElementById('video').videoWidth}x${document.getElementById('video').videoHeight}`;
+                            updateStatsDisplay(videoInfo, document.getElementById('audioStat').textContent);
+                        }
+                    });
+                }, 1000);
+            }
+
+            // 启动音频流监控
+            function startAudioMonitoring() {
+                if (audioActivityTimer) return;
+                
+                audioActivityTimer = setInterval(async () => {
+                    const stats = await window.pc.getStats();
+                    stats.forEach(report => {
+                        if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+                            const bytesDiff = report.bytesReceived - lastAudioBytes;
+                            lastAudioBytes = report.bytesReceived;
+                            
+                            console.log(`[Audio Stream] 接收速率: ${(bytesDiff/1024).toFixed(1)}KB/s`);
+                            
+                            const audioInfo = `采样率: ${report.clockRate}Hz`;
+                            updateStatsDisplay(document.getElementById('videoStat').textContent, audioInfo);
+                        }
+                    });
+                }, 1000);
+            }
+
+            // 停止所有监控
+            function stopMonitoring() {
+                clearInterval(videoActivityTimer);
+                clearInterval(audioActivityTimer);
+                videoActivityTimer = null;
+                audioActivityTimer = null;
+                lastVideoBytes = 0;
+                lastAudioBytes = 0;
+                console.log('[Stream] 监控已停止');
+            }
+
+            // ================= 增强状态管理 =================
+            function updateAppState(newState) {
+                // 控制台输出状态变化
+                const stateNames = ['未连接', '连接中', '已连接', '错误', '重新连接中'];
+                console.log(`[Connection] 状态变更: ${stateNames[newState]}`);
+                
+                // 原有状态处理逻辑
+                currentState = newState;
+                const states = { /* 原有逻辑保持不变 */ };
+            }
+
+            function cleanup() {
+                // 停止所有监控
+                stopMonitoring();
+                console.log('[Stream] 资源已清理');
+                
+                // 原有清理逻辑
+                if(window.pc) {
+                    window.pc.getTransceivers().forEach(transceiver => {
+                        if(transceiver.stop) transceiver.stop();
+                    });
+                }
+                document.getElementById('video').srcObject = null;
+                updateStatsDisplay('--', '--');
+            }
+            window.startVideoMonitoring = startVideoMonitoring; // 暴露函数
+            window.startAudioMonitoring = startAudioMonitoring;
+        }
+        $(document).ready(function() {
+            // ============== 按钮事件绑定 ==============
+            initStreamMonitoring();
+            // 绑定开始推流按钮到原send功能
+            document.getElementById('startBtn').addEventListener('click', function(e) {
+                e.preventDefault();
+                console.log('[Control] 用户点击开始推流');
+                const inputText = document.getElementById('inputText').value;
+                const sessionId = document.getElementById('sessionid').value;
+                const speaker = document.getElementById('speakerid').value;
+                const model = document.getElementById('model').value;
+                const prompt = document.getElementById('prompt').value;
+    
+                // 原表单提交逻辑
+                fetch('/chat2video', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        input: inputText,
+                        speaker: speaker,
+                        model_id: model,
+                        session_id: sessionId,
+                        prompt: prompt
+                    })
+                }).then((response) => {
+                    console.log(response)
+                    updateStatus("推流已启动", "success");
+                }).catch(error => {
+                    updateStatus(`推流失败: ${error}`, "error");
+                });
+            });
+    
+            // ============== 状态管理系统（保持原有样式）==============
+            const AppState = {
+                DISCONNECTED: 0,
+                CONNECTING: 1,
+                CONNECTED: 2,
+                ERROR: 3,
+                RECONNECTING: 4
+            };
+            
+            let currentState = AppState.DISCONNECTED;
+    
+            function updateAppState(newState) {
+                currentState = newState;
+                const states = {
+                    0: { text: "未连接", btnState: [false, true, true] },
+                    1: { text: "连接中...", btnState: [true, true, true] },
+                    2: { text: "已连接", btnState: [true, false, true] },
+                    3: { text: "错误", btnState: [false, true, false] },
+                    4: { text: "重新连接中...", btnState: [true, true, true] }
+                };
+                
+                document.getElementById('connectionStat').textContent = `状态: ${states[newState].text}`;
+                document.getElementById('startBtn').disabled = states[newState].btnState[0];
+                document.getElementById('stopBtn').disabled = states[newState].btnState[1];
+            }
+    
+            function updateStatus(message, type) {
+                const statusDiv = document.getElementById('status');
+                statusDiv.textContent = message;
+                statusDiv.className = `status ${type}`;
+            }
+    
+            // ============== 清理函数（扩展client.js功能）==============
+            function cleanup() {
+                if(window.pc) {
+                    window.pc.getTransceivers().forEach(transceiver => {
+                        if(transceiver.stop) transceiver.stop();
+                    });
+                }
+                document.getElementById('video').srcObject = null;
+                updateStatsDisplay('--', '--');
+            }
+    
+            function updateStatsDisplay(videoInfo, audioInfo) {
+                document.getElementById('videoStat').textContent = `视频: ${videoInfo}`;
+                document.getElementById('audioStat').textContent = `音频: ${audioInfo}`;
+            }
+        });
+    
+        // ============== 扩展client.js的回调 ==============
+        // 覆盖client.js的onTrack事件
+        // const originalOnTrack = window.pc ? window.pc.ontrack : null;
+        // if(window.pc) {
+        //     window.pc.ontrack = function(evt) {
+        //         // 原有client.js的视频绑定
+        //         if (evt.track.kind == 'video') {
+        //             document.getElementById('video').srcObject = evt.streams[0];
+        //         } else {
+        //             document.getElementById('audio').srcObject = evt.streams[0];
+        //         }
+                
+        //         // 触发状态更新
+        //         updateAppState(AppState.CONNECTED);
+        //         updateStatus("媒体流已接收", "success");
+                
+        //         // 保留原始回调
+        //         if(originalOnTrack) originalOnTrack.call(this, evt);
+        //     };
+        // }
+    </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+matplotlib
+argparse
+lpips
+plyfile
+pytorch_msssim
+wandb
+imageio
+imageio[ffmpeg]
+face_alignment
+python_speech_features
+numba
+resampy
+mediapipe
+soundfile
+einops
+configargparse
+open3d
